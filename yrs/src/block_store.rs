@@ -54,8 +54,16 @@ impl ClientBlockList {
         if start == clock {
             // a common case is to just append a block at the end, so check first if we can do that
             Some(right)
+        } else if end == 0 {
+            // A single-block client stream where that block's own range is (0, 0) (a
+            // length-1 block at clock 0). clock != start (checked above), so it's out of
+            // range - there is nothing else to search.
+            None
         } else {
-            let mut mid = ((clock / end) * right as u32) as usize;
+            // The interpolated first guess assumes clock lies within the list's
+            // range; a clock past the last block scales it past `right`, so it
+            // must be clamped before it indexes.
+            let mut mid = (((clock / end) * right as u32) as usize).min(right);
             while left <= right {
                 block = unsafe { &*self.inner[mid].get() };
                 (start, end) = block.clock_range();
@@ -64,6 +72,10 @@ impl ClientBlockList {
                         return Some(mid);
                     }
                     left = mid + 1;
+                } else if mid == 0 {
+                    // The lowest block already starts after clock, so no block
+                    // contains it. Decrementing `right` here would wrap.
+                    return None;
                 } else {
                     right = mid - 1;
                 }
@@ -498,5 +510,56 @@ impl std::fmt::Display for BlockStore {
             s.field(&k.to_string(), v);
         }
         s.finish()
+    }
+}
+#[cfg(test)]
+mod find_index_tests {
+    use super::ClientBlockList;
+    use crate::block::{Block, BlockRange, ClientID};
+    use crate::ID;
+    use std::cell::UnsafeCell;
+
+    const CLIENT: ClientID = ClientID::new(1);
+
+    /// A list of GC blocks with the given inclusive (start, end) clock ranges.
+    fn gc_list(ranges: &[(u32, u32)]) -> ClientBlockList {
+        ClientBlockList {
+            inner: ranges
+                .iter()
+                .map(|(start, end)| {
+                    UnsafeCell::new(Block::GC(BlockRange::new(
+                        ID::new(CLIENT, *start),
+                        end - start + 1,
+                    )))
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn clock_past_the_last_block_returns_none() {
+        // The interpolated first guess scales with clock/end, so a clock well
+        // past the list's range indexes beyond the last element.
+        assert_eq!(gc_list(&[(0, 4), (5, 9)]).find_index(1_000), None);
+    }
+
+    #[test]
+    fn clock_below_the_first_block_returns_none() {
+        // Walking left off the front decrements `right` from 0, wrapping it.
+        assert_eq!(gc_list(&[(10, 14), (15, 19)]).find_index(2), None);
+    }
+
+    #[test]
+    fn single_length_one_block_at_clock_zero() {
+        // clock_range() is (0, 0) here, so the interpolation divides by zero.
+        assert_eq!(gc_list(&[(0, 0)]).find_index(5), None);
+    }
+
+    #[test]
+    fn clock_within_a_block_still_resolves() {
+        let list = gc_list(&[(0, 4), (5, 9), (10, 14)]);
+        assert_eq!(list.find_index(0), Some(0));
+        assert_eq!(list.find_index(7), Some(1));
+        assert_eq!(list.find_index(10), Some(2));
     }
 }

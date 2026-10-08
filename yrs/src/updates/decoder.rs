@@ -105,6 +105,10 @@ impl<'a> From<&'a [u8]> for DecoderV1<'a> {
 }
 
 impl<'a> Read for DecoderV1<'a> {
+    fn remaining_len(&self) -> usize {
+        self.cursor.remaining_len()
+    }
+
     #[inline]
     fn read_u8(&mut self) -> Result<u8, Error> {
         self.cursor.read_u8()
@@ -284,6 +288,10 @@ impl<'a> DecoderV2<'a> {
 }
 
 impl<'a> Read for DecoderV2<'a> {
+    fn remaining_len(&self) -> usize {
+        self.cursor.remaining_len()
+    }
+
     #[inline]
     fn read_exact(&mut self, len: usize) -> Result<&[u8], Error> {
         self.cursor.read_exact(len)

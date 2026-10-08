@@ -60,7 +60,8 @@ impl Any {
             // CASE 118: Map<string,Any>
             118 => {
                 let len: usize = decoder.read_var()?;
-                let mut map = HashMap::with_capacity(len);
+                let mut map = HashMap::new();
+                map.try_reserve(len.min(decoder.remaining_len()))?;
                 for _ in 0..len {
                     let key = decoder.read_string()?;
                     map.insert(key.to_owned(), Any::decode(decoder)?);
@@ -70,7 +71,8 @@ impl Any {
             // CASE 117: Array<Any>
             117 => {
                 let len: usize = decoder.read_var()?;
-                let mut arr = Vec::with_capacity(len);
+                let mut arr = Vec::new();
+                arr.try_reserve(len.min(decoder.remaining_len()))?;
                 for _ in 0..len {
                     arr.push(Any::decode(decoder)?);
                 }

@@ -385,7 +385,8 @@ impl Encode for IdRange {
 impl Decode for IdRange {
     fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, Error> {
         let len: u32 = decoder.read_var()?;
-        let mut ranges = SmallVec::with_capacity(len as usize);
+        // Grow only after decoding a range; the count alone must not allocate.
+        let mut ranges = SmallVec::new();
         for _ in 0..len {
             ranges.push(Range::decode(decoder)?);
         }

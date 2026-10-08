@@ -59,6 +59,10 @@ where
 }
 
 impl<'a> Read for Cursor<'a> {
+    fn remaining_len(&self) -> usize {
+        self.buf.len().saturating_sub(self.next)
+    }
+
     /// Take a slice of the next `len` bytes and advance the position by `len`.
     fn read_exact(&mut self, len: usize) -> Result<&[u8], Error> {
         if self.next + len > self.buf.len() {
@@ -82,6 +86,13 @@ impl<'a> Read for Cursor<'a> {
 }
 
 pub trait Read: Sized {
+    /// Remaining bytes available for conservative preallocation bounds.
+    /// Readers without a known remaining length return zero to skip eager allocation.
+    /// Compressed decoders may report only their uncompressed remainder.
+    fn remaining_len(&self) -> usize {
+        0
+    }
+
     fn read_exact(&mut self, len: usize) -> Result<&[u8], Error>;
 
     /// Read a single byte.

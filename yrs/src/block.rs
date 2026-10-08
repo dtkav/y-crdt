@@ -1894,7 +1894,7 @@ impl ItemContent {
             BLOCK_ITEM_JSON_REF_NUMBER => {
                 let mut remaining = decoder.read_len()? as i32;
                 let mut buf = Vec::new();
-                buf.try_reserve(remaining as usize)?;
+                buf.try_reserve((remaining as usize).min(decoder.remaining_len()))?;
 
                 while remaining >= 0 {
                     buf.push(decoder.read_string()?.to_owned());
@@ -1917,7 +1917,7 @@ impl ItemContent {
             BLOCK_ITEM_ANY_REF_NUMBER => {
                 let len = decoder.read_len()? as usize;
                 let mut values = Vec::new();
-                values.try_reserve(len)?;
+                values.try_reserve(len.min(decoder.remaining_len()))?;
 
                 let mut i = 0;
                 while i < len {

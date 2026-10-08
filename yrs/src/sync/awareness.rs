@@ -550,7 +550,8 @@ impl Encode for AwarenessUpdate {
 impl Decode for AwarenessUpdate {
     fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, crate::encoding::read::Error> {
         let len: usize = decoder.read_var()?;
-        let mut clients = HashMap::with_capacity(len);
+        let mut clients = HashMap::new();
+        clients.try_reserve(len.min(decoder.remaining_len()))?;
         for _ in 0..len {
             let client_id = ClientID::new(decoder.read_var::<u64>()?);
             let clock: u32 = decoder.read_var()?;

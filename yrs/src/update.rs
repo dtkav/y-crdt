@@ -800,7 +800,7 @@ impl Decode for Update {
         // read blocks
         let clients_len: u32 = decoder.read_var()?;
         let mut clients = HashMap::with_hasher(BuildHasherDefault::default());
-        clients.try_reserve(clients_len as usize)?;
+        clients.try_reserve((clients_len as usize).min(decoder.remaining_len()))?;
 
         let mut blocks = UpdateBlocks { clients };
         for _ in 0..clients_len {
@@ -812,9 +812,9 @@ impl Decode for Update {
                 .clients
                 .entry(client)
                 .or_insert_with(|| VecDeque::new());
-            // Attempt to pre-allocate memory for the blocks. If the capacity overflows and
-            // allocation fails, return an error.
-            blocks.try_reserve(blocks_len)?;
+            // v2 streams may compress many blocks into few bytes. Limit eager allocation,
+            // then grow as blocks are decoded, without rejecting valid compressed data.
+            blocks.try_reserve(blocks_len.min(decoder.remaining_len()))?;
 
             for _ in 0..blocks_len {
                 let id = ID::new(client, clock);
@@ -1652,7 +1652,10 @@ mod test {
         fn valid_update() -> Vec<u8> {
             let doc = Doc::new();
             let text = doc.get_or_insert_text("t");
-            text.push(&mut doc.transact_mut(), "hello world, this is a yrs document");
+            text.push(
+                &mut doc.transact_mut(),
+                "hello world, this is a yrs document",
+            );
             let update = {
                 let txn = doc.transact();
                 txn.encode_state_as_update_v1(&StateVector::default())
@@ -1672,8 +1675,8 @@ mod test {
         fn a_huge_length_prefix_is_an_error_not_an_abort() {
             // 21 bytes; before the fix this asked the allocator for ~215 TB.
             let bytes = [
-                0xd7, 0x54, 0x8f, 0x54, 0x77, 0x0c, 0x78, 0x00, 0x2d, 0x67, 0x76, 0x98, 0xfb,
-                0xbf, 0xd5, 0xf3, 0x57, 0x30, 0xee, 0x32, 0x40,
+                0xd7, 0x54, 0x8f, 0x54, 0x77, 0x0c, 0x78, 0x00, 0x2d, 0x67, 0x76, 0x98, 0xfb, 0xbf,
+                0xd5, 0xf3, 0x57, 0x30, 0xee, 0x32, 0x40,
             ];
             decode_and_apply(&bytes);
         }

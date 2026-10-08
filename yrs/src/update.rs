@@ -519,10 +519,16 @@ impl Update {
         match info {
             BLOCK_SKIP_REF_NUMBER => {
                 let len: u32 = decoder.read_var()?;
+                if len == 0 {
+                    return Err(Error::UnexpectedValue);
+                }
                 Ok(Some(BlockCarrier::Skip(BlockRange { id, len })))
             }
             BLOCK_GC_REF_NUMBER => {
                 let len: u32 = decoder.read_len()?;
+                if len == 0 {
+                    return Err(Error::UnexpectedValue);
+                }
                 Ok(Some(BlockCarrier::GC(BlockRange { id, len })))
             }
             info => {
@@ -821,7 +827,9 @@ impl Decode for Update {
                 if let Some(block) = Self::decode_block(id, decoder)? {
                     // due to bug in the past it was possible for empty bugs to be generated
                     // even though they had no effect on the document store
-                    clock += block.len();
+                    clock = clock
+                        .checked_add(block.len())
+                        .ok_or(Error::UnexpectedValue)?;
                     blocks.push_back(block);
                 }
             }

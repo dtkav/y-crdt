@@ -30,7 +30,10 @@ impl Decode for Range<u32> {
     fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, Error> {
         let clock = decoder.read_ds_clock()?;
         let len = decoder.read_ds_len()?;
-        Ok(clock..(clock + len))
+        clock
+            .checked_add(len)
+            .map(|end| clock..end)
+            .ok_or(Error::UnexpectedValue)
     }
 }
 

@@ -1,6 +1,7 @@
 use crate::block::ClientID;
 use crate::encoding::read::{Cursor, Error, Read};
 use crate::*;
+use std::convert::TryInto;
 use std::sync::Arc;
 
 /// A trait that can be implemented by any other type in order to support lib0 decoding capability.
@@ -314,13 +315,23 @@ impl<'a> Decoder for DecoderV2<'a> {
     }
 
     fn read_ds_clock(&mut self) -> Result<u32, Error> {
-        self.ds_curr_val += self.cursor.read_var::<u32>()?;
+        self.ds_curr_val = self
+            .ds_curr_val
+            .checked_add(self.cursor.read_var::<u32>()?)
+            .ok_or(Error::UnexpectedValue)?;
         Ok(self.ds_curr_val)
     }
 
     fn read_ds_len(&mut self) -> Result<u32, Error> {
-        let diff = self.cursor.read_var::<u32>()? + 1;
-        self.ds_curr_val += diff;
+        let diff = self
+            .cursor
+            .read_var::<u32>()?
+            .checked_add(1)
+            .ok_or(Error::UnexpectedValue)?;
+        self.ds_curr_val = self
+            .ds_curr_val
+            .checked_add(diff)
+            .ok_or(Error::UnexpectedValue)?;
         Ok(diff)
     }
 
@@ -355,7 +366,10 @@ impl<'a> Decoder for DecoderV2<'a> {
     }
 
     fn read_len(&mut self) -> Result<u32, Error> {
-        Ok(self.len_decoder.read_u64()? as u32)
+        self.len_decoder
+            .read_u64()?
+            .try_into()
+            .map_err(|_| Error::UnexpectedValue)
     }
 
     fn read_any(&mut self) -> Result<Any, Error> {

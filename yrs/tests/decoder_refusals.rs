@@ -202,3 +202,86 @@ fn largest_valid_client_is_preserved() {
         StateVector::decode_v1(&[1, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0f, 1]).unwrap();
     assert_eq!(sv.iter().next().unwrap().0.get(), (1u64 << 53) - 1);
 }
+
+#[test]
+fn overflowing_and_overlong_client_varints_are_refused() {
+    // u64 overflow bits and an eleventh byte previously folded into another ID.
+    for client in [
+        &[0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 2][..],
+        &[
+            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x81, 1,
+        ],
+    ] {
+        let mut bytes = vec![1, 1, 5, 0, 4, 0]; // explicit parent ID
+        bytes.extend_from_slice(client);
+        bytes.extend_from_slice(&[0, 1, b'x', 0]);
+        assert!(matches!(
+            Update::decode_v1(&bytes),
+            Err(Error::InvalidVarInt)
+        ));
+    }
+    // v2 client stream with a signed-magnitude value above u64.
+    let client = &[0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 2];
+    assert!(Update::decode_v2(&v2(
+        [&[], client, &[], &[], &[0], &[0], &[], &[], &[1]],
+        &[1, 1, 0, 0]
+    ))
+    .is_err());
+}
+
+#[test]
+fn overflowing_clock_varint_is_refused() {
+    assert!(matches!(
+        Update::decode_v1(&[1, 1, 5, 0x80, 0x80, 0x80, 0x80, 0x10, 0, 1, 0]),
+        Err(Error::InvalidVarInt)
+    ));
+}
+
+#[test]
+fn truncated_and_overflowing_v2_stream_lengths_are_errors() {
+    for bytes in [
+        &[0, 0x80][..],
+        &[0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1],
+        &[0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 2],
+    ] {
+        assert!(Update::decode_v2(bytes).is_err());
+        assert!(StateVector::decode_v2(bytes).is_err());
+        assert!(Snapshot::decode_v2(bytes).is_err());
+    }
+}
+
+#[test]
+fn integer_limits_and_negative_zero_are_preserved() {
+    use yrs::encoding::read::{Cursor, Read};
+    let max = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1];
+    assert_eq!(Cursor::new(&max).read_var::<u64>().unwrap(), u64::MAX);
+    let min = [0xc0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 2];
+    assert_eq!(Cursor::new(&min).read_var::<i64>().unwrap(), i64::MIN);
+    let zero = Cursor::new(&[0x40]).read_var_signed::<i64>().unwrap();
+    assert_eq!(zero.value(), 0);
+    assert!(zero.is_negative());
+}
+
+#[test]
+fn overflowing_v2_run_counts_are_refused() {
+    let count = &[0x41, 0xff, 0xff, 0xff, 0xff, 0x0f];
+    refused(Update::decode_v2(&v2(
+        [&[], count, &[], &[], &[0], &[0], &[], &[], &[1]],
+        &[1, 1, 0, 0],
+    )));
+    let diff = &[1, 0xff, 0xff, 0xff, 0xff, 0x0f];
+    refused(Update::decode_v2(&v2(
+        [
+            &[],
+            &[5, 6],
+            diff,
+            &[],
+            &[0x84],
+            &[1, b'x', 1],
+            &[],
+            &[],
+            &[],
+        ],
+        &[1, 1, 0, 0],
+    )));
+}

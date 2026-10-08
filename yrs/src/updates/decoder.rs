@@ -260,37 +260,13 @@ impl<'a> DecoderV2<'a> {
         })
     }
 
-    fn read_usize(buf: &[u8], idx: &mut usize) -> Result<usize, Error> {
-        if *idx >= buf.len() {
-            return Err(Error::InvalidVarInt);
-        }
-        let mut num: usize = 0;
-        let mut len: usize = 0;
-        loop {
-            let r = buf[*idx];
-            *idx += 1;
-            num |= (r as usize & 127) << len;
-            len += 7;
-            if r < 128 {
-                return Ok(num);
-            }
-            if len > 128 {
-                return Err(Error::InvalidVarInt);
-            }
-        }
-    }
-
     fn read_buf(buf: &'a [u8], idx: &mut usize) -> Result<&'a [u8], Error> {
-        let len = Self::read_usize(buf, idx)?;
-        let start = *idx;
-        let end = start + len;
-        if end <= buf.len() {
-            let slice = &buf[start..end];
-            *idx += len as usize;
-            Ok(slice)
-        } else {
-            Err(Error::EndOfBuffer(len))
-        }
+        let mut cursor = Cursor { buf, next: *idx };
+        let len: usize = cursor.read_var()?;
+        let start = cursor.next;
+        cursor.read_exact(len)?;
+        *idx = cursor.next;
+        Ok(&buf[start..*idx])
     }
 }
 
@@ -427,7 +403,10 @@ impl<'a> IntDiffOptRleDecoder<'a> {
             let has_count = diff & 1;
             self.diff = (diff >> 1) as i32;
             self.count = if has_count != 0 {
-                self.cursor.read_var::<u32>()? + 2
+                self.cursor
+                    .read_var::<u32>()?
+                    .checked_add(2)
+                    .ok_or(Error::UnexpectedValue)?
             } else {
                 1
             };
@@ -459,8 +438,12 @@ impl<'a> UIntOptRleDecoder<'a> {
             // if the sign is negative, we read the count too, otherwise count is 1
             let is_negative = s.is_negative();
             if is_negative {
-                self.count = self.cursor.read_var::<u32>()? + 2;
-                self.last = (-s.value()) as u64;
+                self.count = self
+                    .cursor
+                    .read_var::<u32>()?
+                    .checked_add(2)
+                    .ok_or(Error::UnexpectedValue)?;
+                self.last = s.value().unsigned_abs();
             } else {
                 self.count = 1;
                 self.last = s.value() as u64;

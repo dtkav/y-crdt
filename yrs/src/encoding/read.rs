@@ -65,13 +65,13 @@ impl<'a> Read for Cursor<'a> {
 
     /// Take a slice of the next `len` bytes and advance the position by `len`.
     fn read_exact(&mut self, len: usize) -> Result<&[u8], Error> {
-        if self.next + len > self.buf.len() {
-            Err(Error::EndOfBuffer(len))
-        } else {
-            let slice = &self.buf[self.next..(self.next + len)];
-            self.next += len as usize;
-            Ok(slice)
-        }
+        let end = self.next.checked_add(len).ok_or(Error::EndOfBuffer(len))?;
+        let slice = self
+            .buf
+            .get(self.next..end)
+            .ok_or(Error::EndOfBuffer(len))?;
+        self.next = end;
+        Ok(slice)
     }
 
     /// Read a single byte.

@@ -15,7 +15,9 @@ impl VarInt for usize {
 
     #[inline]
     fn read<R: Read>(r: &mut R) -> Result<Self, Error> {
-        Ok(read_var_u64(r)? as Self)
+        read_var_u64(r)?
+            .try_into()
+            .map_err(|_| Error::InvalidVarInt)
     }
 }
 
@@ -227,57 +229,28 @@ fn write_var_i64<W: Write>(mut value: i64, w: &mut W) {
 
 fn read_var_u64<R: Read>(r: &mut R) -> Result<u64, Error> {
     let mut num = 0;
-    let mut len: usize = 0;
-    loop {
-        let r = r.read_u8()?;
-        num |= u64::wrapping_shl((r & 0b01111111) as u64, len as u32);
-        len += 7;
-        if r < 0b10000000 {
-            return Ok(num);
-        }
-        if len > 70 {
+    for shift in (0..64).step_by(7) {
+        let byte = r.read_u8()?;
+        let payload = u64::from(byte & 0x7f);
+        if payload > (u64::MAX >> shift) {
             return Err(Error::InvalidVarInt);
         }
+        num |= payload << shift;
+        if byte < 0x80 {
+            return Ok(num);
+        }
     }
+    Err(Error::InvalidVarInt)
 }
 
 fn read_var_u32<R: Read>(r: &mut R) -> Result<u32, Error> {
-    let mut num = 0;
-    let mut len: usize = 0;
-    loop {
-        let r = r.read_u8()?;
-        num |= u32::wrapping_shl((r & 0b01111111) as u32, len as u32);
-        len += 7;
-        if r < 0b10000000 {
-            return Ok(num);
-        }
-        if len > 70 {
-            // a proper setting for 32bit int would be 35 bits, however for Yjs compatibility
-            // we allow wrap up up to 64bit ints (with int overflow wrap)
-            return Err(Error::InvalidVarInt);
-        }
-    }
+    read_var_u64(r)?
+        .try_into()
+        .map_err(|_| Error::InvalidVarInt)
 }
 
 fn read_var_i64<R: Read>(reader: &mut R) -> Result<i64, Error> {
-    let mut r = reader.read_u8()?;
-    let mut num = (r & 0b00111111 as u8) as i64;
-    let mut len: u32 = 6;
-    let is_negative = r & 0b01000000 as u8 > 0;
-    if r & 0b10000000 as u8 == 0 {
-        return Ok(if is_negative { -num } else { num });
-    }
-    loop {
-        r = reader.read_u8()?;
-        num |= (r as i64 & 0b01111111 as i64) << len;
-        len += 7;
-        if r < 0b10000000 as u8 {
-            return Ok(if is_negative { -num } else { num });
-        }
-        if len > 70 {
-            return Err(Error::InvalidVarInt);
-        }
-    }
+    Ok(i64::read_signed(reader)?.value())
 }
 
 pub trait SignedVarInt: Sized + Copy {
@@ -353,26 +326,34 @@ impl SignedVarInt for i64 {
     }
 
     fn read_signed<R: Read>(reader: &mut R) -> Result<Signed<Self>, Error> {
-        let mut r = reader.read_u8()?;
-        let mut num = (r & 0b00111111 as u8) as i64;
-        let mut len: u32 = 6;
-        let is_negative = r & 0b01000000 as u8 > 0;
-        if r & 0b10000000 as u8 == 0 {
-            let num = if is_negative { -num } else { num };
-            return Ok(Signed::new(num, is_negative));
-        }
-        loop {
-            r = reader.read_u8()?;
-            num |= (r as i64 & 0b01111111 as i64) << len;
-            len += 7;
-            if r < 0b10000000 as u8 {
-                let num = if is_negative { -num } else { num };
-                return Ok(Signed::new(num, is_negative));
-            }
-            if len > 70 {
+        let first = reader.read_u8()?;
+        let negative = first & 0x40 != 0;
+        let mut magnitude = u64::from(first & 0x3f);
+        let mut byte = first;
+        let mut shift = 6;
+        while byte & 0x80 != 0 {
+            if shift >= 64 {
                 return Err(Error::InvalidVarInt);
             }
+            byte = reader.read_u8()?;
+            let payload = u64::from(byte & 0x7f);
+            if payload > (u64::MAX >> shift) {
+                return Err(Error::InvalidVarInt);
+            }
+            magnitude |= payload << shift;
+            shift += 7;
         }
+        let value = if negative && magnitude == 1u64 << 63 {
+            i64::MIN
+        } else {
+            let value: i64 = magnitude.try_into().map_err(|_| Error::InvalidVarInt)?;
+            if negative {
+                -value
+            } else {
+                value
+            }
+        };
+        Ok(Signed::new(value, negative))
     }
 }
 

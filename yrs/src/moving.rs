@@ -1,4 +1,4 @@
-use crate::block::{ClientID, ItemContent, ItemPtr, Prelim, Unused};
+use crate::block::{ItemContent, ItemPtr, Prelim, Unused};
 use crate::block_iter::BlockIter;
 use crate::branch::{Branch, BranchPtr};
 use crate::encoding::read::Error;

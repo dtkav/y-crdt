@@ -1892,13 +1892,12 @@ impl ItemContent {
         match ref_num & 0b1111 {
             BLOCK_ITEM_DELETED_REF_NUMBER => Ok(ItemContent::Deleted(decoder.read_len()?)),
             BLOCK_ITEM_JSON_REF_NUMBER => {
-                let mut remaining = decoder.read_len()? as i32;
+                let len = decoder.read_len()? as usize;
                 let mut buf = Vec::new();
-                buf.try_reserve((remaining as usize).min(decoder.remaining_len()))?;
+                buf.try_reserve(len.min(decoder.remaining_len()))?;
 
-                while remaining >= 0 {
+                for _ in 0..len {
                     buf.push(decoder.read_string()?.to_owned());
-                    remaining -= 1;
                 }
                 Ok(ItemContent::JSON(buf))
             }

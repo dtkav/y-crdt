@@ -285,3 +285,27 @@ fn overflowing_v2_run_counts_are_refused() {
         &[1, 1, 0, 0],
     )));
 }
+
+#[test]
+fn json_content_reads_exactly_its_declared_count() {
+    use yrs::updates::encoder::Encode;
+    let bytes = [1, 1, 1, 0, 2, 1, 1, b't', 1, 4, b'n', b'u', b'l', b'l', 0];
+    let update = Update::decode_v1(&bytes).unwrap();
+    assert_eq!(update.encode_v1(), bytes);
+    let bytes_v2 = v2(
+        [
+            &[],
+            &[1],
+            &[],
+            &[],
+            &[2],
+            &[5, b't', b'n', b'u', b'l', b'l', 1, 4],
+            &[1],
+            &[],
+            &[1],
+        ],
+        &[1, 1, 0, 0],
+    );
+    let update_v2 = Update::decode_v2(&bytes_v2).unwrap();
+    assert_eq!(update_v2.encode_v1(), bytes);
+}

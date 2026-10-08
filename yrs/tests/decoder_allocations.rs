@@ -118,3 +118,13 @@ fn awareness_bounds_client_counts() {
     let bytes = [0xff, 0xff, 0xff, 0x7f];
     bounded_error(|| AwarenessUpdate::decode_v1(&bytes));
 }
+
+#[test]
+fn json_counts_above_i32_do_not_wrap_into_empty_content() {
+    let bytes = [1, 1, 1, 0, 2, 1, 1, b't', 0xff, 0xff, 0xff, 0xff, 0x0f, 0];
+    bounded_error(|| Update::decode_v1(&bytes));
+    let bytes_v2 = [
+        0, 0, 1, 1, 0, 0, 1, 2, 3, 1, b't', 1, 1, 1, 0, 5, 0xbf, 0xff, 0xff, 0xff, 0x1f, 1, 1, 0, 0,
+    ];
+    bounded_error(|| Update::decode_v2(&bytes_v2));
+}

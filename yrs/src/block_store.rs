@@ -288,15 +288,23 @@ impl<'a> Iterator for ClientBlockListIterMut<'a> {
 /// Block store is a collection of all blocks known to a document owning instance of this type.
 /// Blocks are organized per client ID and contain a resizable list of all blocks inserted by that
 /// client.
-#[derive(PartialEq, Default)]
+#[derive(PartialEq)]
 pub(crate) struct BlockStore {
     clients: HashMap<ClientID, ClientBlockList, BuildHasherDefault<ClientHasher>>,
+    offset_kind: OffsetKind,
 }
 
 pub(crate) type Iter<'a> = std::collections::hash_map::Iter<'a, ClientID, ClientBlockList>;
 pub(crate) type IterMut<'a> = std::collections::hash_map::IterMut<'a, ClientID, ClientBlockList>;
 
 impl BlockStore {
+    pub(crate) fn new(offset_kind: OffsetKind) -> Self {
+        Self {
+            offset_kind,
+            clients: HashMap::default(),
+        }
+    }
+
     /// Checks if block store is empty. Empty block store doesn't contain any blocks, neither active
     /// nor tombstoned.
     pub fn is_empty(&self) -> bool {
@@ -443,7 +451,7 @@ impl BlockStore {
         let id = block.id().clone();
         let blocks = self.clients.get_mut(&id.client)?;
         let index = blocks.find_pivot(id.clock)?;
-        let mut right = block.splice(offset, encoding)?;
+        let mut right = block.splice(offset, encoding, self.offset_kind)?;
         let right_ptr = ItemPtr::from(&mut right);
         blocks.insert(index + 1, right.into());
 

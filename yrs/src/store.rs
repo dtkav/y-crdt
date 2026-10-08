@@ -70,7 +70,7 @@ impl Store {
             offset_kind: options.offset_kind,
             skip_gc: options.skip_gc,
             types: HashMap::default(),
-            blocks: BlockStore::default(),
+            blocks: BlockStore::new(options.offset_kind),
             subdocs: HashMap::default(),
             linked_by: HashMap::default(),
             events: None,
@@ -306,7 +306,10 @@ impl Store {
             slice.ptr
         } else {
             let mut i = blocks.find_pivot(id.clock).unwrap();
-            if let Some(new) = slice.ptr.splice(slice.start, OffsetKind::Utf16) {
+            if let Some(new) = slice
+                .ptr
+                .splice(slice.start, OffsetKind::Utf16, self.offset_kind)
+            {
                 if let Some(source) = links.clone() {
                     let dest = self.linked_by.entry(ItemPtr::from(&new)).or_default();
                     dest.extend(source);
@@ -329,7 +332,9 @@ impl Store {
                 let last_id = slice.last_id();
                 blocks.find_pivot(last_id.clock).unwrap()
             };
-            let new = ptr.splice(slice.len(), OffsetKind::Utf16).unwrap();
+            let new = ptr
+                .splice(slice.len(), OffsetKind::Utf16, self.offset_kind)
+                .unwrap();
             if let Some(source) = links {
                 let dest = self.linked_by.entry(ItemPtr::from(&new)).or_default();
                 dest.extend(source);

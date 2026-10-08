@@ -1523,6 +1523,53 @@ mod test {
     use std::time::Duration;
 
     #[test]
+    fn js_surrogate_split_survives_reload() {
+        // Yjs 13.6.14: insert "a🚀b", delete the low surrogate, insert "Z" after "b".
+        let updates: [&[u8]; 3] = [
+            &[
+                1, 1, 5, 0, 4, 1, 8, 99, 111, 110, 116, 101, 110, 116, 115, 6, 97, 240, 159, 154,
+                128, 98, 0,
+            ],
+            &[0, 1, 5, 1, 2, 1],
+            &[1, 1, 5, 4, 132, 5, 3, 1, 90, 0],
+        ];
+        for offset_kind in [OffsetKind::Bytes, OffsetKind::Utf16] {
+            let mut doc = Doc::with_options(Options {
+                offset_kind,
+                ..Options::default()
+            });
+            for update in updates {
+                doc.transact_mut()
+                    .apply_update(Update::decode_v1(update).unwrap())
+                    .unwrap();
+            }
+            for _ in 0..3 {
+                let txn = doc.transact();
+                let txt = txn.get_text("contents").unwrap();
+                assert_eq!(txt.get_string(&txn), "a\u{FFFD}bZ");
+                assert_eq!(
+                    txt.len(&txn),
+                    match offset_kind {
+                        OffsetKind::Bytes => 6,
+                        OffsetKind::Utf16 => 4,
+                    }
+                );
+                assert_eq!(txn.state_vector().get(&ClientID::new(5)), 5);
+                let bytes = txn.encode_state_as_update_v1(&StateVector::default());
+                drop(txn);
+                let next = Doc::with_options(Options {
+                    offset_kind,
+                    ..Options::default()
+                });
+                next.transact_mut()
+                    .apply_update(Update::decode_v1(&bytes).unwrap())
+                    .unwrap();
+                doc = next;
+            }
+        }
+    }
+
+    #[test]
     fn insert_empty_string() {
         let doc = Doc::new();
         let txt = doc.get_or_insert_text("test");

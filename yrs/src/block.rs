@@ -16,6 +16,7 @@ use crate::utils::OptionExt;
 use crate::{Any, Doc, IdSet, Options, Out, Transact};
 use serde::{Deserialize, Serialize};
 use smallstr::SmallString;
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::fmt::Formatter;
@@ -513,7 +514,12 @@ impl ItemPtr {
         }
     }
 
-    pub(crate) fn splice(&mut self, offset: u32, encoding: OffsetKind) -> Option<Box<Item>> {
+    pub(crate) fn splice(
+        &mut self,
+        offset: u32,
+        encoding: OffsetKind,
+        content_encoding: OffsetKind,
+    ) -> Option<Box<Item>> {
         let self_ptr = self.clone();
         if offset == 0 {
             None
@@ -522,7 +528,21 @@ impl ItemPtr {
             let client = item.id.client;
             let clock = item.id.clock;
             let len = item.len;
+            let old_content_len = item.content_len(content_encoding);
             let content = item.content.splice(offset as usize, encoding).unwrap();
+            // Splitting a surrogate pair preserves clocks but replaces four UTF-8
+            // bytes with two three-byte replacement characters. Keep the live
+            // parent's byte length consistent with the new content.
+            if content_encoding == OffsetKind::Bytes
+                && !item.is_deleted()
+                && item.parent_sub.is_none()
+            {
+                if let TypePtr::Branch(mut parent) = item.parent {
+                    let new_content_len =
+                        item.content_len(content_encoding) + content.len(content_encoding);
+                    parent.content_len = parent.content_len + new_content_len - old_content_len;
+                }
+            }
             item.len = offset;
             let mut new = Box::new(Item {
                 id: ID::new(client, clock + offset),
@@ -1563,25 +1583,38 @@ impl Deref for SplittableString {
     }
 }
 
-pub(crate) fn split_str(str: &str, offset: usize, kind: OffsetKind) -> (&str, &str) {
-    fn map_utf16_offset(str: &str, offset: u32) -> u32 {
-        let mut off = 0;
-        let mut i = 0;
-        for c in str.chars() {
-            if i >= offset {
-                break;
-            }
-            off += c.len_utf8() as u32;
-            i += c.len_utf16() as u32;
+/// Split at an exact UTF-16 offset, replacing orphaned surrogate halves as Yjs does.
+/// Ordinary character boundaries borrow the original string without allocating.
+fn split_utf16(str: &str, offset: usize) -> (Cow<'_, str>, Cow<'_, str>) {
+    let mut remaining = offset;
+    for (i, c) in str.char_indices() {
+        if remaining == 0 {
+            return (Cow::Borrowed(&str[..i]), Cow::Borrowed(&str[i..]));
         }
-        off
+        if remaining < c.len_utf16() {
+            let mut left = str[..i].to_owned();
+            left.push('\u{FFFD}');
+            let mut right = String::from("\u{FFFD}");
+            right.push_str(&str[i + c.len_utf8()..]);
+            return (Cow::Owned(left), Cow::Owned(right));
+        }
+        remaining -= c.len_utf16();
     }
+    (Cow::Borrowed(str), Cow::Borrowed(""))
+}
 
-    let off = match kind {
-        OffsetKind::Bytes => offset,
-        OffsetKind::Utf16 => map_utf16_offset(str, offset as u32) as usize,
-    };
-    str.split_at(off)
+pub(crate) fn split_str(
+    str: &str,
+    offset: usize,
+    kind: OffsetKind,
+) -> (Cow<'_, str>, Cow<'_, str>) {
+    match kind {
+        OffsetKind::Bytes => {
+            let (left, right) = str.split_at(offset);
+            (Cow::Borrowed(left), Cow::Borrowed(right))
+        }
+        OffsetKind::Utf16 => split_utf16(str, offset),
+    }
 }
 
 /// An enum describing the type of a user data content stored as part of one or more
@@ -1796,20 +1829,9 @@ impl ItemContent {
             ItemContent::Deleted(_) => encoder.write_len(end - start + 1),
             ItemContent::Binary(buf) => encoder.write_buf(buf),
             ItemContent::String(s) => {
-                let slice = if start != 0 {
-                    let (_, right) = split_str(&s, start as usize, OffsetKind::Utf16);
-                    right
-                } else {
-                    &s
-                };
-                let slice = if end != 0 {
-                    let (left, _) =
-                        split_str(&slice, (end - start + 1) as usize, OffsetKind::Utf16);
-                    left
-                } else {
-                    slice
-                };
-                encoder.write_string(slice)
+                let (_, right) = split_utf16(s, start as usize);
+                let (slice, _) = split_utf16(&right, (end - start + 1) as usize);
+                encoder.write_string(&slice)
             }
             ItemContent::Embed(s) => encoder.write_json(s),
             ItemContent::JSON(s) => {
@@ -1927,20 +1949,10 @@ impl ItemContent {
                 Some(ItemContent::Any(right))
             }
             ItemContent::String(string) => {
-                // compute offset given in unicode code points into byte position
-                let (left, right) = split_str(&string, offset, encoding);
-                let left: SplittableString = left.into();
-                let right: SplittableString = right.into();
+                let (left, right) = split_str(string, offset, encoding);
+                let left: SplittableString = left.as_ref().into();
+                let right: SplittableString = right.as_ref().into();
 
-                //TODO: do we need that in Rust?
-                //let split_point = left.chars().last().unwrap();
-                //if split_point >= 0xD800 as char && split_point <= 0xDBFF as char {
-                //    // Last character of the left split is the start of a surrogate utf16/ucs2 pair.
-                //    // We don't support splitting of surrogate pairs because this may lead to invalid documents.
-                //    // Replace the invalid character with a unicode replacement character (� / U+FFFD)
-                //    left.replace_range((offset-1)..offset, "�");
-                //    right.replace_range(0..1, "�");
-                //}
                 *self = ItemContent::String(left);
 
                 Some(ItemContent::String(right))
@@ -2296,8 +2308,11 @@ impl std::fmt::Display for ItemPtr {
 
 #[cfg(test)]
 mod test {
-    use crate::block::{split_str, SplittableString};
+    use crate::block::{split_str, ItemContent, SplittableString};
     use crate::doc::OffsetKind;
+    use crate::encoding::read::Read;
+    use crate::updates::decoder::DecoderV1;
+    use crate::updates::encoder::{Encoder, EncoderV1};
     use std::ops::Deref;
 
     #[test]
@@ -2333,6 +2348,46 @@ mod test {
         let (a, b) = split_str(&s, 30, OffsetKind::Bytes);
         assert_eq!(a, "Zażółć gęślą jaźń😀");
         assert_eq!(b, "ありがとうございます");
+    }
+
+    #[test]
+    fn split_surrogate_pair() {
+        let (left, right) = split_str("a🚀b", 2, OffsetKind::Utf16);
+        assert_eq!(left, "a\u{FFFD}");
+        assert_eq!(right, "\u{FFFD}b");
+        assert_eq!(left.encode_utf16().count(), 2);
+        assert_eq!(right.encode_utf16().count(), 2);
+
+        let mut content = ItemContent::String("a🚀b".into());
+        let right = content.splice(2, OffsetKind::Utf16).unwrap();
+        assert_eq!(content, ItemContent::String("a\u{FFFD}".into()));
+        assert_eq!(right, ItemContent::String("\u{FFFD}b".into()));
+    }
+
+    #[test]
+    fn utf16_splits_and_slices_preserve_lengths() {
+        // Check every boundary and inclusive slice, including each surrogate half,
+        // adjacent supplementary characters, BMP Unicode, empty strings and ASCII.
+        for s in ["", "abc", "日本é", "a🚀b", "🚀👍🏽"] {
+            let units: Vec<_> = s.encode_utf16().collect();
+            for offset in 0..=units.len() {
+                let (left, right) = split_str(s, offset, OffsetKind::Utf16);
+                assert_eq!(left, String::from_utf16_lossy(&units[..offset]));
+                assert_eq!(right, String::from_utf16_lossy(&units[offset..]));
+            }
+            let content = ItemContent::String(s.into());
+            for start in 0..units.len() {
+                for end in start..units.len() {
+                    let mut encoder = EncoderV1::new();
+                    content.encode_slice(&mut encoder, start as u32, end as u32);
+                    let bytes = encoder.to_vec();
+                    let mut decoder = DecoderV1::from(bytes.as_slice());
+                    let decoded = decoder.read_string().unwrap();
+                    assert_eq!(decoded, String::from_utf16_lossy(&units[start..=end]));
+                    assert_eq!(decoded.encode_utf16().count(), end - start + 1);
+                }
+            }
+        }
     }
 
     #[test]

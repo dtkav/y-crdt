@@ -879,7 +879,7 @@ impl BlockCarrier {
     pub(crate) fn splice(&self, offset: u32) -> Option<Self> {
         match self {
             BlockCarrier::Item(x) => {
-                let next = ItemPtr::from(x).splice(offset, OffsetKind::Utf16)?;
+                let next = ItemPtr::from(x).splice(offset, OffsetKind::Utf16, OffsetKind::Utf16)?;
                 Some(BlockCarrier::Item(next))
             }
             BlockCarrier::Skip(x) => {

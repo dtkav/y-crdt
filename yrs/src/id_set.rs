@@ -4,7 +4,7 @@ use crate::encoding::read::Error;
 use crate::iter::TxnIterator;
 use crate::slice::BlockSlice;
 use crate::store::Store;
-use crate::updates::decoder::{Decode, Decoder};
+use crate::updates::decoder::{client_id_or_refuse, Decode, Decoder};
 use crate::updates::encoder::{Encode, Encoder};
 use crate::utils::client_hasher::ClientHasher;
 use crate::ReadTxn;
@@ -541,9 +541,9 @@ impl Decode for IdSet {
         let mut i = 0;
         while i < client_len {
             decoder.reset_ds_cur_val();
-            let client: u64 = decoder.read_var()?;
+            let client = client_id_or_refuse(decoder.read_var::<u64>()?)?;
             let range = IdRange::decode(decoder)?;
-            set.0.insert(ClientID::new(client), range);
+            set.0.insert(client, range);
             i += 1;
         }
         Ok(set)

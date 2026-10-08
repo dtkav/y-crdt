@@ -4,6 +4,18 @@ use crate::*;
 use std::convert::TryInto;
 use std::sync::Arc;
 
+/// Refuse wire identifiers that would panic or silently lose high bits.
+pub(crate) fn client_id_or_refuse(client: u64) -> Result<ClientID, Error> {
+    if client >> 53 != 0 {
+        return Err(Error::UnexpectedValue);
+    }
+    #[cfg(feature = "small-client")]
+    if client > u32::MAX as u64 {
+        return Err(Error::UnexpectedValue);
+    }
+    Ok(ClientID::new(client))
+}
+
 /// A trait that can be implemented by any other type in order to support lib0 decoding capability.
 pub trait Decode: Sized {
     fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, Error>;
@@ -84,12 +96,9 @@ impl<'a> DecoderV1<'a> {
     }
 
     fn read_id(&mut self) -> Result<ID, Error> {
-        #[cfg(not(feature = "small-client"))]
         let client: u64 = self.read_var()?;
-        #[cfg(feature = "small-client")]
-        let client: u32 = self.read_var()?;
         let clock = self.read_var()?;
-        Ok(ID::new(ClientID::new(client as u64), clock))
+        Ok(ID::new(client_id_or_refuse(client)?, clock))
     }
 }
 
@@ -149,11 +158,8 @@ impl<'a> Decoder for DecoderV1<'a> {
 
     #[inline]
     fn read_client(&mut self) -> Result<ClientID, Error> {
-        #[cfg(not(feature = "small-client"))]
         let client: u64 = self.cursor.read_var()?;
-        #[cfg(feature = "small-client")]
-        let client: u32 = self.cursor.read_var()?;
-        Ok(ClientID::new(client as u64))
+        client_id_or_refuse(client)
     }
 
     #[inline]
@@ -337,20 +343,20 @@ impl<'a> Decoder for DecoderV2<'a> {
 
     fn read_left_id(&mut self) -> Result<ID, Error> {
         Ok(ID::new(
-            ClientID::new(self.client_decoder.read_u64()?),
+            client_id_or_refuse(self.client_decoder.read_u64()?)?,
             self.left_clock_decoder.read_u32()?,
         ))
     }
 
     fn read_right_id(&mut self) -> Result<ID, Error> {
         Ok(ID::new(
-            ClientID::new(self.client_decoder.read_u64()?),
+            client_id_or_refuse(self.client_decoder.read_u64()?)?,
             self.right_clock_decoder.read_u32()?,
         ))
     }
 
     fn read_client(&mut self) -> Result<ClientID, Error> {
-        Ok(ClientID::new(self.client_decoder.read_u64()?))
+        client_id_or_refuse(self.client_decoder.read_u64()?)
     }
 
     fn read_info(&mut self) -> Result<u8, Error> {

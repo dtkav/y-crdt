@@ -1,6 +1,6 @@
 use crate::block::ClientID;
 use crate::encoding::read::Error;
-use crate::updates::decoder::{Decode, Decoder};
+use crate::updates::decoder::{client_id_or_refuse, Decode, Decoder};
 use crate::updates::encoder::{Encode, Encoder};
 use crate::utils::client_hasher::ClientHasher;
 use crate::{IdSet, ID};
@@ -121,9 +121,9 @@ impl Decode for StateVector {
         sv.try_reserve(len.min(decoder.remaining_len()))?;
         let mut i = 0;
         while i < len {
-            let client: u64 = decoder.read_var()?;
+            let client = client_id_or_refuse(decoder.read_var::<u64>()?)?;
             let clock = decoder.read_var()?;
-            sv.insert(ClientID::new(client), clock);
+            sv.insert(client, clock);
             i += 1;
         }
         Ok(StateVector(sv))

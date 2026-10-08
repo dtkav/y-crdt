@@ -20,6 +20,8 @@ use crate::types::text::TextEvent;
 #[cfg(feature = "weak")]
 use crate::types::weak::{LinkSource, WeakEvent, WeakRef};
 use crate::types::xml::{XmlElementRef, XmlEvent, XmlTextEvent, XmlTextRef};
+#[cfg(feature = "weak")]
+use crate::updates::decoder::client_id_or_refuse;
 use crate::updates::decoder::{Decode, Decoder};
 use crate::updates::encoder::{Encode, Encoder};
 use crate::*;
@@ -170,10 +172,16 @@ impl TypeRef {
                 let name = decoder.read_string()?;
                 IndexScope::Root(name.into())
             } else {
-                IndexScope::Nested(ID::new(ClientID::new(decoder.read_var::<u64>()?), decoder.read_var()?))
+                IndexScope::Nested(ID::new(
+                    client_id_or_refuse(decoder.read_var::<u64>()?)?,
+                    decoder.read_var()?,
+                ))
             }
         } else {
-            IndexScope::Relative(ID::new(ClientID::new(decoder.read_var::<u64>()?), decoder.read_var()?))
+            IndexScope::Relative(ID::new(
+                client_id_or_refuse(decoder.read_var::<u64>()?)?,
+                decoder.read_var()?,
+            ))
         };
 
         let end_scope = if is_end_unbounded {
@@ -181,12 +189,18 @@ impl TypeRef {
                 let name = decoder.read_string()?;
                 IndexScope::Root(name.into())
             } else {
-                IndexScope::Nested(ID::new(ClientID::new(decoder.read_var::<u64>()?), decoder.read_var()?))
+                IndexScope::Nested(ID::new(
+                    client_id_or_refuse(decoder.read_var::<u64>()?)?,
+                    decoder.read_var()?,
+                ))
             }
         } else if is_single {
             start_scope.clone()
         } else {
-            IndexScope::Relative(ID::new(ClientID::new(decoder.read_var::<u64>()?), decoder.read_var()?))
+            IndexScope::Relative(ID::new(
+                client_id_or_refuse(decoder.read_var::<u64>()?)?,
+                decoder.read_var()?,
+            ))
         };
         let start = StickyIndex::new(start_scope, start_assoc);
         let end = StickyIndex::new(end_scope, end_assoc);

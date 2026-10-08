@@ -3,7 +3,7 @@ use crate::block_iter::BlockIter;
 use crate::branch::{Branch, BranchPtr};
 use crate::encoding::read::Error;
 use crate::transaction::TransactionMut;
-use crate::updates::decoder::{Decode, Decoder};
+use crate::updates::decoder::{client_id_or_refuse, Decode, Decoder};
 use crate::updates::encoder::{Encode, Encoder};
 use crate::{BranchID, ReadTxn, WriteTxn, ID};
 use serde::de::{MapAccess, Visitor};
@@ -321,12 +321,12 @@ impl Decode for Move {
         //TODO use BIT3 & BIT4 to indicate the case `null` is the start/end
         // BIT5 is reserved for future extensions
         let priority = flags >> 6;
-        let start_client = ClientID::new(decoder.read_var::<u64>()?);
+        let start_client = client_id_or_refuse(decoder.read_var::<u64>()?)?;
         let start_id = ID::new(start_client, decoder.read_var()?);
         let end_id = if is_collapsed {
             start_id
         } else {
-            let end_client = ClientID::new(decoder.read_var::<u64>()?);
+            let end_client = client_id_or_refuse(decoder.read_var::<u64>()?)?;
             ID::new(end_client, decoder.read_var()?)
         };
         let start = StickyIndex::new(IndexScope::Relative(start_id), start_assoc);
@@ -849,7 +849,7 @@ impl Decode for IndexScope {
         let tag: u8 = decoder.read_var()?;
         match tag {
             0 => {
-                let client = ClientID::new(decoder.read_var::<u64>()?);
+                let client = client_id_or_refuse(decoder.read_var::<u64>()?)?;
                 let clock = decoder.read_var()?;
                 Ok(IndexScope::Relative(ID::new(client, clock)))
             }
@@ -858,7 +858,7 @@ impl Decode for IndexScope {
                 Ok(IndexScope::Root(type_name.into()))
             }
             2 => {
-                let client = ClientID::new(decoder.read_var::<u64>()?);
+                let client = client_id_or_refuse(decoder.read_var::<u64>()?)?;
                 let clock = decoder.read_var()?;
                 Ok(IndexScope::Nested(ID::new(client, clock)))
             }

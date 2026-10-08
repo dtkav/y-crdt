@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::block::ClientID;
 use crate::sync::{Clock, Timestamp};
-use crate::updates::decoder::{Decode, Decoder};
+use crate::updates::decoder::{client_id_or_refuse, Decode, Decoder};
 use crate::updates::encoder::{Encode, Encoder};
 use crate::{Doc, Observer, Origin};
 
@@ -553,7 +553,7 @@ impl Decode for AwarenessUpdate {
         let mut clients = HashMap::new();
         clients.try_reserve(len.min(decoder.remaining_len()))?;
         for _ in 0..len {
-            let client_id = ClientID::new(decoder.read_var::<u64>()?);
+            let client_id = client_id_or_refuse(decoder.read_var::<u64>()?)?;
             let clock: u32 = decoder.read_var()?;
             let json: Arc<str> = decoder.read_string()?.into();
             clients.insert(client_id, AwarenessUpdateEntry { clock, json });
